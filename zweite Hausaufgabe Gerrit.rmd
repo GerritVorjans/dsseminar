@@ -1,0 +1,315 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Aufgabe 1: Gibt es eine lineare Beziehung zwischen der Anzahl von Büchern pro Publisher und der Anzahl der Ratings, die die Bücher eines Publishers erhalten?
+
+Aufgabe 2: Haben ältere Bücher mehr Ratings, weil sie mehr Zeit haben, um Ratings zu sammeln (Hinweis: Man muss nicht unbedingt mit Ratings arbeiten)
+
+
+//// Vorbereitung ///
+
+Librarys laden
+
+```{r}
+library(tidyverse)
+library(stringi)
+```
+
+
+Datensätze laden und die beiden wichtigen Datensätze zusammenfügen:
+
+```{r}
+BX_Book_Ratings <- read_delim("BX-Book-Ratings.csv", 
+    ";", escape_double = FALSE, trim_ws = TRUE)
+BX_Books <- read_delim("BX-Books.csv", 
+    ";", escape_double = FALSE, trim_ws = TRUE)
+BX_Users <- read_delim("BX-Users.csv", 
+    ";", escape_double = FALSE, trim_ws = TRUE)
+```
+
+
+Für die Fragen brauchen wir eigentlich nur die Datensätze Ratings und Bücher, die kombinieren wir jetzt:
+
+```{r}
+Bookrates <- left_join(BX_Book_Ratings, BX_Books, by="ISBN")
+```
+
+
+
+/// Aufgabe 1 - Vorbereitung ////
+
+
+
+```{r}
+summary(Bookrates)
+```
+
+Die erte Grundsatzentscheidung, die ich treffe, ist die, mit einem halbwegs sauberen Datensatz zu arbeiten, bei dem ich nur Einträge mit korrekten ISBN-Nummern verwende. Dazu filtere ich fehlerhafte ISBN raus. 
+
+```{r}
+Bookrates_new <- Bookrates %>%
+  mutate(Laenge = stri_length(ISBN)) %>%
+  mutate(Character = grepl("[A-Za-z]", ISBN)) %>% # Alternativ kann man die Klasse nutzen [[:alpha:]] alpha sucht nach Buchstaben
+  mutate(Sign=grepl("[[:punct:]]", ISBN)) %>%
+  filter(Laenge == 10| Laenge == 13) %>%
+  filter(Character==FALSE) %>%
+  filter(Sign==FALSE)
+```
+
+Diese Datensatz modifiziere ich jetzt für unsere Analyse nochmal, ich will jetzt keine Einträge ohne Angabe des Publishers mehr haben und zweitens nehme ich alles raus, was für die Analyse nicht brauchen. Und für die Analyse brauchen wir nur ISBN-Nummer zur Identifikation der Titel, die Publisher und die Ratings. Das speichern wir einmal sauber ab.
+
+```{r}
+df <- Bookrates_new %>%
+  select(ISBN, Publisher, `Book-Rating`)%>%
+  filter(!is.na(Publisher))
+```
+
+So sehen unsere Daten jetzt aus
+
+```{r}
+df 
+```
+
+//////// Aufgabe 1, Weg 1 ///////////
+
+Es gibt jetzt zwei grundsätzliche Lösungswege. Bei dem ersten erstellen wir separate Datensätze, einmal für die Auswertung der Ratingzahlen pro Publisher und einmal für die Auswertung der Zahl von Titeln pro Publisher. Diese beiden fügen wir dann am Ende für unser lineares Modell zusammen und erstellen den plot. 
+
+Um die Zahl der Bewertungen rauszufiltern, müssen wir alle Book-Ratings=0 rausnehmen, dann für liegt ja keine Bewertung vor
+
+Bewertete Bücher / Ratings pro Pubisher
+```{r}
+(rates_per_pub <- df%>%
+  filter(`Book-Rating`!= 0) %>%
+  group_by(Publisher) %>%
+  summarise(Bewertungszahl = n()))
+```
+
+Demzufolge gibt es 11.043 Publisher mit bewerteten Büchern
+
+Anzahl Titel pro Publisher:
+
+```{r}
+(books_per_pub <- df %>%
+   group_by(ISBN) %>%
+  unique() %>%
+  group_by(Publisher) %>% 
+  summarize(ZahlTitel = n()) 
+   )
+```
+
+Dieser Auswertung zur Folge gibt es 15.935 Publisher, die ein Buch herausgebracht haben.
+
+```{r}
+15935-11043
+```
+Daraus ergibt sich jetzt ein Problem: 4892 Publisher haben keinerlei bewertetes Buch herausgebracht. Damit sind unsere Datensätze unterschiedlich lang, weshalb daraus jetzt nicht direkt ein Modell erstellen können
+
+
+```{r}
+#lm(rates_per_pub$Bewertungszahl ~ books_per_pub$ZahlTitel)
+```
+
+Um das Problem zu beheben,kombinieren wir die Datensätze jetzt mal mit einem Full_join.
+
+```{r}
+(combined <- books_per_pub%>%
+  full_join(rates_per_pub))
+```
+
+Wir haben NA-Werte drin. Gucken wir mal, ob das unser Model stört.
+
+```{r}
+line1 <- lm(ZahlTitel ~ Bewertungszahl, combined)
+```
+
+```{r}
+summary(line1)
+```
+
+```{r}
+plot(combined$ZahlTitel,combined$Bewertungszahl)
+abline(line1)
+```
+Grundsätzlich funtioniert also unser Modell auch mit NA-Werten.
+
+
+Wir testen mal, was passiert, wenn wir die NA-Werte überschreiben. Im Grunde sind das ja 0 Bewertungen, also schreiben wir auch eine Null rein. Dazu schreiben wir uns eine Funktion, die die NAs mit 0 überschreibt. 
+
+
+```{r}
+replacenull <- function(bwrt){
+  if (is.na(bwrt)) {
+    return(0)
+  } else{
+    return(bwrt)
+  }
+}
+```
+
+Die Funktion wollen wir jetzt auf unsere Daten applizieren
+
+```{r}
+combined$Bewertungszahl <- sapply(combined$Bewertungszahl,replacenull)
+```
+
+```{r}
+combined
+```
+
+```{r}
+line2 <- lm (ZahlTitel ~ Bewertungszahl, combined)
+```
+
+```{r}
+summary(line2)
+```
+
+Die Werte sind minimal anders, die Grundtendenz ist die gleiche.
+
+```{r}
+plot(combined$ZahlTitel,combined$Bewertungszahl)
+abline(line2)
+```
+
+Die Funktion siehtpraktisch genauso aus.
+
+//////// Aufgabe 1, Weg 2 ///////////
+
+Der zweite Weg ist gleich doppelt anders. 
+
+Unterschied 1: Wir verzichten darauf, Verlage ohne bewertete Bücher mit Verlagen zu vergleichen, die bewertete Bücher haben. Das heißt, wir gucken uns nur die Verlage mit Bewertungen an und gucken hier, welchen Einfluss die Zahl der Titel auf die Zahl der Bewertungen hat.
+
+Unterschied 2: Wir arbeiten nicht mit summarize und 2 Dataframes, sondern schreiben alles in ein Dataframe.
+
+Durch unsere Unterscheidung 1 können wir direkt am Anfang den Filter für beide Analysen drinlassen. 
+
+```{r}
+(df2 <- df %>%
+  filter(`Book-Rating`!= 0) %>%
+  group_by(Publisher) %>%
+  mutate(Bewertungszahl = n()) %>%
+  group_by(ISBN) %>%
+  unique() %>%
+  group_by(Publisher) %>% 
+  mutate(ZahlTitel = n()) %>%
+  unique() %>%
+  select(Publisher, Bewertungszahl, ZahlTitel)%>%
+  unique()%>%
+  arrange(Publisher))
+```
+
+So, das sind jetzt genau die 11.043 Einträge, die wir auch schon oben gesehen haben, nur dass wir jetzt alle Informationen in einem kompakten Datensatz haben. 
+
+Damit trainieren wir wieder unser Modell:
+
+```{r}
+line3 <- lm(Bewertungszahl ~ ZahlTitel, df2)
+```
+
+... und geben die Summary aus:
+
+```{r}
+summary(line3)
+```
+
+Hier kriegen wir jetzt einen höheren Zusammenhang von 0.937 raus. 
+
+Die R-Werte von rund 0.93 lassen auf eine sehr lineare Verteilung schließen, die der perfekten linearen Regression schon sehr nahe kommt. Schauen wir uns das einmal noch als Plot an:
+
+```{r}
+plot(df2$ZahlTitel, df2$Bewertungszahl)
+abline(line3)
+```
+
+Der Plot sieht ähnlich aus wie oben. 
+
+ 
+
+
+///////// Aufgabe 2 ///////////
+
+Haben ältere Bücher mehr Ratings, weil sie mehr Zeit haben, um Ratings zu sammeln (Hinweis: Man muss nicht unbedingt mit Ratings arbeiten)
+
+
+```{r}
+head(Bookrates)
+```
+
+Wir frisieren zum Start unseren Datensatz und behalten nur Merkmale, die wir auch benötigen
+
+```{r}
+df3 <- Bookrates %>%
+  select(ISBN, `Book-Rating`, `Year-Of-Publication`, `Book-Title` )
+```
+
+
+Jetzt filtenr wir als erstes als Einträge ohne Erscheinungsdatum raus und außerdem die Bücher ohne Rating. Dann erstellen wir eine neue Spalte, die das Alter eines Buches errechnet. Das ist einfach nur 2020 - Year of Publication
+
+
+```{r}
+df3 <- df3 %>%
+  filter(!is.na(`Year-Of-Publication`), `Book-Rating`!=0) %>%
+  mutate(Bookage = 2020 - `Year-Of-Publication`)
+```
+
+Okay, wir frisieren den Datensatz jetzt nochmal weiter und erstellen einen Durchschnittswert für die Book-Ratings gleicher Titel, den wir auf eine Nachkommastelle abrunden. Dann schmeißen wir die überflüssigen Titel raus.
+
+```{r}
+df3 <- df3 %>%
+  group_by(ISBN) %>%
+  mutate (`Book-Rating` = mean(`Book-Rating`)) %>%
+  mutate(`Book-Rating` = round(`Book-Rating`,1))%>%
+  unique()
+```
+
+Okay, wir haben offensichtlich eine ganze Reihe von Büchern mit einem Year-Of-Publication von 0, wo eigentlich ein NA-Wert hätte stehen sollen. Die Bücher streichen wir einfach knallhart raus. Das gleiche machen wir mit den Büchern, deren Erscheinungsdatum nach 2020 ist
+
+```{r}
+df3 <- df3 %>%
+  filter(`Year-Of-Publication`>0 & `Year-Of-Publication` <= 2020)
+```
+ 
+```{r}
+df3 %>%
+  arrange(Bookage)
+```
+
+So, das Ganze visualisieren wir jetzt mal etwas anspruchsvoller. Zeit für GGplot.
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+ggplot(df3, aes(`Bookage`,`Book-Rating`)) +
+  geom_point()+
+  coord_cartesian(xlim=c(0,130), ylim=c(0,10))
+```
+
+Das sieht jetzt auf den ersten Blick nicht unbedingt nach einem Zusammenhang aus, aber wir lassen mal ein paar Tests durchlaufen:
+
+```{r}
+line5 <- lm(`Bookage` ~ `Book-Rating`,df3)
+```
+
+```{r}
+summary(line5)
+```
+
+```{r}
+plot(df3$`Book-Rating`, df3$Bookage)
+abline(line5)
+```
+
+```{r}
+cor(df3$`Book-Rating`, df3$Bookage)
+```
+
+Also, wir können klar sagen, dass es sogar eine leicht negative Korrelation zwischen Alter und Bewertung gibt. Diese fällt aber kaum ins Gewicht. Insgesamt kann man hier nicht von einem statistischen Zusammenhang sprechen. 
+
